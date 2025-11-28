@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CMH Earthquake Early Warning System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .status-bar {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .status-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .status-item {
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+        }
+
+        .status-item label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+
+        .status-item value {
+            display: block;
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .status-item.alert value {
+            color: #e74c3c;
+        }
+
+        .status-item.success value {
+            color: #27ae60;
+        }
+
+        button.location-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        button.location-btn:hover {
+            background: #764ba2;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .card-header {
+            background: #f9f9f9;
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .card-body {
+            padding: 20px;
+        }
+
+        #map {
+            width: 100%;
+            height: 500px;
+            border-radius: 8px;
+            z-index: 1;
+        }
+
+        .event-details {
+            display: grid;
+            gap: 10px;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .detail-row label {
+            font-weight: 600;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .detail-row value {
+            color: #333;
+            font-weight: 500;
+        }
+
+        .alert-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .alert-modal.active {
+            display: flex;
+        }
+
+        .alert-modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 500px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+
+        .alert-modal-content h2 {
+            font-size: 28px;
+            color: #e74c3c;
+            margin-bottom: 20px;
+        }
+
+        .alert-modal-content .magnitude {
+            font-size: 48px;
+            font-weight: bold;
+            color: #e74c3c;
+            margin: 20px 0;
+        }
+
+        .alert-modal-content .coordinates {
+            font-size: 14px;
+            color: #666;
+            margin: 15px 0;
+        }
+
+        .alert-modal-content .lead-time {
+            font-size: 24px;
+            margin: 20px 0;
+            padding: 15px;
+            background: #f0f0f0;
+            border-radius: 4px;
+        }
+
+        .alert-modal-content .lead-time.critical {
+            background: #ffe0e0;
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .alert-modal-content button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+
+        .events-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .events-table th {
+            background: #f9f9f9;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 13px;
+            border-bottom: 2px solid #ddd;
+        }
+
+        .events-table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+
+        .events-table tr:hover {
+            background: #f9f9f9;
+            cursor: pointer;
+        }
+
+        .magnitude-badge {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+
+        .chart-container {
+            margin-top: 20px;
+            height: 300px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            background: #f9f9f9;
+            padding: 20px;
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+            margin-top: 30px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 CMH Earthquake Early Warning System</h1>
+            <p>Real-time seismic monitoring with ∆CMH detector • Global IRIS network</p>
+        </header>
+
+        <div class="status-bar">
+            <div class="status-row">
+                <div class="status-item success">
+                    <label>System Status</label>
+                    <value id="system-status">Initializing...</value>
+                </div>
+                <div class="status-item">
+                    <label>Monitoring Status</label>
+                    <value id="monitoring-status">OK – Real-Time</value>
+                </div>
+                <div class="status-item">
+                    <label>Active Stations</label>
+                    <value id="active-stations">100</value>
+                </div>
+                <div class="status-item">
+                    <label>Alerts Issued</label>
+                    <value id="alerts-issued">0</value>
+                </div>
+            </div>
+            <div class="status-row">
+                <button class="location-btn" id="location-btn">📍 Request Location</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="card">
+                <div class="card-header">Interactive Map</div>
+                <div class="card-body">
+                    <div id="map"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Latest Event Details</div>
+                <div class="card-body">
+                    <div class="event-details" id="event-details">
+                        <div class="detail-row">
+                            <label>Status</label>
+                            <value>No earthquakes detected</value>
+                        </div>
+                        <div class="detail-row">
+                            <label>Last Update</label>
+                            <value id="last-update">--:--:--</value>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Recent Earthquake Events</div>
+            <div class="card-body">
+                <table class="events-table">
+                    <thead>
+                        <tr>
+                            <th>Time (UTC)</th>
+                            <th>Magnitude</th>
+                            <th>Latitude</th>
+                            <th>Longitude</th>
+                            <th>Depth (km)</th>
+                            <th>Stations</th>
+                        </tr>
+                    </thead>
+                    <tbody id="events-tbody">
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: #999;">Waiting for earthquake detection...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>CMH Earthquake Early Warning System • Powered by IRIS Real-Time Network</p>
+            <p>© 2025 • All Rights Reserved</p>
+        </div>
+    </div>
+
+    <div class="alert-modal" id="alert-modal">
+        <div class="alert-modal-content">
+            <h2>🚨 EARTHQUAKE ALERT</h2>
+            <div class="magnitude" id="alert-magnitude">6.2</div>
+            <div class="coordinates" id="alert-coordinates">Epicenter: 35.82°N, 138.51°E</div>
+            <div class="coordinates" id="alert-distance">Distance from you: --</div>
+            <div class="lead-time" id="alert-lead-time">Lead Time: --</div>
+            <button onclick="closeAlertModal()">Dismiss</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        // Configuration
+        const API_URL = 'http://localhost:5000/api';
+        const POLL_INTERVAL = 2000; // 2 seconds
+        
+        let userLocation = null;
+        let map = null;
+        let userMarker = null;
+        let epicenterMarker = null;
+        let distanceLine = null;
+        let recentMarkers = [];
+        let lastAlertId = null;
+
+        // Initialize map
+        function initializeMap() {
+            map = L.map('map').setView([20, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+        }
+
+        // Request user location
+        document.getElementById('location-btn').addEventListener('click', () => {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    position => {
+                        userLocation = {
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude
+                        };
+                        updateUserLocation();
+                    },
+                    error => {
+                        alert('Error getting location: ' + error.message);
+                    }
+                );
+            } else {
+                alert('Geolocation not supported');
+            }
+        });
+
+        // Update user location on map
+        function updateUserLocation() {
+            if (!map) return;
+            
+            if (userMarker) {
+                map.removeLayer(userMarker);
+            }
+            
+            userMarker = L.circleMarker([userLocation.lat, userLocation.lng], {
+                radius: 8,
+                fillColor: '#3498db',
+                color: '#2980b9',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(map);
+            
+            userMarker.bindPopup(`Your Location<br>${userLocation.lat.toFixed(4)}°N, ${userLocation.lng.toFixed(4)}°E`);
+            map.setView([userLocation.lat, userLocation.lng], 6);
+        }
+
+        // Fetch latest alert
+        async function fetchLatestAlert() {
+            try {
+                let url = `${API_URL}/latest-alert`;
+                if (userLocation) {
+                    url += `?user_lat=${userLocation.lat}&user_lon=${userLocation.lng}`;
+                }
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.alert_id && data.alert_id !== lastAlertId) {
+                    lastAlertId = data.alert_id;
+                    displayAlert(data);
+                    showAlertModal(data);
+                }
+                
+                if (data.epicenter) {
+                    updateMapMarkers(data);
+                    updateEventDetails(data);
+                }
+                
+                updateStatus();
+            } catch (error) {
+                console.error('Error fetching alert:', error);
+            }
+        }
+
+        // Fetch alert history
+        async function fetchAlertHistory() {
+            try {
+                const response = await fetch(`${API_URL}/alert-history`);
+                const data = await response.json();
+                displayEventHistory(data);
+            } catch (error) {
+                console.error('Error fetching history:', error);
+            }
+        }
+
+        // Update map markers
+        function updateMapMarkers(alert) {
+            if (!map) return;
+            
+            const epicenterLat = alert.epicenter.latitude;
+            const epicenterLng = alert.epicenter.longitude;
+            
+            if (epicenterMarker) {
+                map.removeLayer(epicenterMarker);
+            }
+            
+            epicenterMarker = L.circleMarker([epicenterLat, epicenterLng], {
+                radius: 12,
+                fillColor: '#e74c3c',
+                color: '#c0392b',
+                weight: 3,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(map);
+            
+            const magnitudeStr = alert.estimated_magnitude.toFixed(1);
+            epicenterMarker.bindPopup(`Epicenter<br>M${magnitudeStr}<br>${epicenterLat.toFixed(2)}°N, ${epicenterLng.toFixed(2)}°E`);
+            
+            // Draw line from user to epicenter
+            if (userLocation && distanceLine) {
+                map.removeLayer(distanceLine);
+            }
+            
+            if (userLocation) {
+                distanceLine = L.polyline(
+                    [[userLocation.lat, userLocation.lng], [epicenterLat, epicenterLng]],
+                    { color: '#667eea', weight: 2, opacity: 0.6, dashArray: '5, 5' }
+                ).addTo(map);
+            }
+        }
+
+        // Update event details
+        function updateEventDetails(alert) {
+            const details = document.getElementById('event-details');
+            
+            const leadTime = alert.geolocation_metrics?.lead_time_seconds || 'N/A';
+            const distance = alert.geolocation_metrics?.distance_km || 'N/A';
+            const leadTimeStr = typeof leadTime === 'number' ? leadTime.toFixed(1) + ' sec' : leadTime;
+            const distanceStr = typeof distance === 'number' ? distance.toFixed(1) + ' km' : distance;
+            
+            details.innerHTML = `
+                <div class="detail-row">
+                    <label>Magnitude</label>
+                    <value>M${alert.estimated_magnitude.toFixed(2)} ± ${alert.magnitude_uncertainty.toFixed(2)}</value>
+                </div>
+                <div class="detail-row">
+                    <label>Coordinates (Decimal)</label>
+                    <value>${alert.epicenter.latitude.toFixed(4)}°N, ${alert.epicenter.longitude.toFixed(4)}°E</value>
+                </div>
+                <div class="detail-row">
+                    <label>Coordinates (DMS)</label>
+                    <value>${alert.epicenter.latitude_dms}, ${alert.epicenter.longitude_dms}</value>
+                </div>
+                <div class="detail-row">
+                    <label>Depth</label>
+                    <value>${alert.epicenter.depth_km} km</value>
+                </div>
+                <div class="detail-row">
+                    <label>Distance from you</label>
+                    <value>${distanceStr}</value>
+                </div>
+                <div class="detail-row">
+                    <label>Lead Time</label>
+                    <value>${leadTimeStr}</value>
+                </div>
+                <div class="detail-row">
+                    <label>Stations</label>
+                    <value>${alert.num_stations}</value>
+                </div>
+                <div class="detail-row">
+                    <label>Confidence</label>
+                    <value>${(alert.confidence * 100).toFixed(1)}%</value>
+                </div>
+            `;
+        }
+
+        // Display event history
+        function displayEventHistory(events) {
+            const tbody = document.getElementById('events-tbody');
+            
+            if (!events || events.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #999;">No recent earthquakes</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = events.map(event => `
+                <tr>
+                    <td>${new Date(event.detection_time).toLocaleTimeString()}</td>
+                    <td><span class="magnitude-badge">M${event.magnitude.toFixed(1)}</span></td>
+                    <td>${event.latitude?.toFixed(4) || 'N/A'}</td>
+                    <td>${event.longitude?.toFixed(4) || 'N/A'}</td>
+                    <td>${event.depth_km}</td>
+                    <td>${event.num_stations}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Show alert modal
+        function showAlertModal(alert) {
+            const modal = document.getElementById('alert-modal');
+            document.getElementById('alert-magnitude').textContent = `M${alert.estimated_magnitude.toFixed(1)}`;
+            document.getElementById('alert-coordinates').textContent = 
+                `Epicenter: ${alert.epicenter.latitude_dms}, ${alert.epicenter.longitude_dms}`;
+            
+            const distance = alert.geolocation_metrics?.distance_km;
+            const leadTime = alert.geolocation_metrics?.lead_time_seconds;
+            
+            if (distance) {
+                document.getElementById('alert-distance').textContent = `Distance from you: ${distance.toFixed(1)} km`;
+            }
+            
+            if (leadTime) {
+                const leadTimeEl = document.getElementById('alert-lead-time');
+                leadTimeEl.textContent = `Lead Time: ${leadTime.toFixed(1)} seconds`;
+                if (leadTime < 10) {
+                    leadTimeEl.classList.add('critical');
+                } else {
+                    leadTimeEl.classList.remove('critical');
+                }
+            }
+            
+            modal.classList.add('active');
+        }
+
+        function closeAlertModal() {
+            document.getElementById('alert-modal').classList.remove('active');
+        }
+
+        // Update status
+        async function updateStatus() {
+            try {
+                const response = await fetch(`${API_URL}/status`);
+                const data = await response.json();
+                
+                document.getElementById('system-status').textContent = 'Running ✓';
+                document.getElementById('active-stations').textContent = data.active_stations;
+                document.getElementById('alerts-issued').textContent = data.alerts_issued;
+                document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+            } catch (error) {
+                document.getElementById('system-status').textContent = 'Offline';
+            }
+        }
+
+        // Main polling loop
+        function startPolling() {
+            fetchLatestAlert();
+            fetchAlertHistory();
+            setInterval(() => {
+                fetchLatestAlert();
+                fetchAlertHistory();
+            }, POLL_INTERVAL);
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            initializeMap();
+            startPolling();
+        });
+    </script>
+</body>
+</html>
