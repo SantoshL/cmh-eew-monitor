@@ -41,6 +41,7 @@ from typing import List, Optional, Dict
 from enum import Enum
 import threading
 import time
+import os
 
 # Import ObsPy for IRIS demo endpoint
 from obspy.clients.fdsn import Client as IRISClient
@@ -50,7 +51,7 @@ from obspy import UTCDateTime
 # CONFIGURATION
 # ============================================================================
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='.')
 CORS(app)
 
 logging.basicConfig(
@@ -412,6 +413,25 @@ class EEWEngine:
 # ============================================================================
 
 
+@app.route('/')
+def serve_dashboard():
+    """Serve the main dashboard HTML"""
+    try:
+        with open('index.html', 'r') as f:
+            return f.read()
+    except FileNotFoundError:
+        return jsonify({
+            'status': 'running',
+            'message': 'CMH EEW Backend is running. Dashboard HTML not found.',
+            'endpoints': {
+                'status': '/api/status',
+                'latest_alert': '/api/latest-alert',
+                'alert_history': '/api/alert-history',
+                'test_historical': '/api/test-historical'
+            }
+        })
+
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get system status"""
@@ -545,11 +565,12 @@ def initialize_app():
 
 
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
     print("=" * 80)
     print("CMH EARTHQUAKE EARLY WARNING SYSTEM - IRIS REAL-TIME MONITOR")
     print("=" * 80)
     print()
-    print("Backend: Flask API on http://localhost:5000")
+    print(f"Backend: Flask API on http://localhost:{port}")
     print("Endpoints:")
     print("  GET /api/status           - System status")
     print("  GET /api/latest-alert     - Latest earthquake alert")
@@ -560,7 +581,7 @@ if __name__ == '__main__':
     print()
     app.run(
         host='0.0.0.0',
-        port=5000,
+        port=port,
         debug=False,
         threaded=True
     )
