@@ -1,0 +1,61 @@
+[
+  {
+    "timestamp": "2025-11-29T08:27:47.573970",
+    "source": "USGS",
+    "event": {
+      "alert_id": "us6000rpsj",
+      "detection_time": "2025-11-22T11:57:11.604000",
+      "magnitude": 4.6,
+      "latitude": -23.3544,
+      "longitude": -179.8568,
+      "depth_km": 588.6,
+      "location": "south of the Fiji Islands",
+      "num_stations": 15,
+      "confidence": 0.95,
+      "source": "USGS"
+    },
+    "system_status": {
+      "active_stations": 100,
+      "total_alerts": 0
+    }
+  },
+  {
+    "timestamp": "2025-11-29T08:27:47.608813",
+    "source": "USGS",
+    "event": {
+      "alert_id": "us6000rpuy",
+      "detection_time": "2025-11-22T22:00:59.059000",
+      "magnitude": 4.6,
+      "latitude": -7.542,
+      "longitude": 127.8092,
+      "depth_km": 167.3,
+      "location": "140 km NE of Lospalos, Timor Leste",
+      "num_stations": 65,
+      "confidence": 0.95,
+      "source": "USGS"
+    },
+    "system_status": {
+      "active_stations": 100,
+      "total_alerts": 0
+    }
+  }
+]mestamp": "2025-11-29T08:27:47.659852",
+    "source": "USGS",
+    "event": {
+      "alert_id": "us6000rptb",
+      "detection_time": "2025-11-22T15:59:01.558000",
+      "magnitude": 4.5,
+      "latitude": 11.0187,
+      "longitude": -85.2184,
+      "depth_km": 222.0,
+      "location": "11 km NW of San Jos\u00e9, Costa Rica",
+      "num_stations": 29,
+      "confidence": 0.95,
+      "source": "USGS"
+    },
+    "system_status": {
+      "active_stations": 100,
+      "total_alerts": 0
+    }
+  }
+]
