@@ -1,32 +1,19 @@
 #!/usr/bin/env python3
+
 """
-IRIS CMH EARTHQUAKE EARLY WARNING SYSTEM - Backend
-Complete production-ready Flask API for real-time earthquake detection
+IRIS CMH EARTHQUAKE EARLY WARNING SYSTEM - Backend v2.0
+Enhanced with Railway Volume support and research data export
 
-Features:
-  • USGS real-time earthquake feed integration
-  • IRIS FDSN waveform retrieval for detected events
-  • Your ∆CMH detector algorithm (production code)
-  • Multi-station consensus detection
-  • Magnitude estimation with uncertainty
-  • Geolocation support (lat/lon, lead time, distance)
-  • REST API (with CORS)
-  • Real-time monitoring dashboard
-  • Auto-updates every 10 minutes
-  • DATA LOGGING: All events and waveform fetches logged to JSON
-
-===============================================================================
-LIVE DATA INTEGRATION + LOGGING
-===============================================================================
-- USGS: Fetches last 7 days of M4.5+ earthquakes on startup
-- Auto-update: Checks for new earthquakes every 10 minutes
-- IRIS: Can fetch waveforms for any USGS event via /api/test-historical
-- LOGGING: All events saved to data/earthquake_log_YYYY-MM-DD.json
-- WAVEFORMS: All IRIS fetches logged to data/iris_waveform_log.json
+NEW FEATURES:
+• Railway Volume persistent storage support
+• File naming convention: yymmdd-erthqk-type-vX.ext
+• Data download endpoint for research
+• Better startup logging
+• Error handling improvements
 ===============================================================================
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import logging
@@ -40,6 +27,8 @@ import time
 import os
 import requests
 from pathlib import Path
+import zipfile
+import io
 
 # Import ObsPy for IRIS waveform retrieval
 from obspy.clients.fdsn import Client as IRISClient
@@ -48,7 +37,6 @@ from obspy import UTCDateTime
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
@@ -58,9 +46,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create data directory for logs
-DATA_DIR = Path('data')
+# Data directory - supports Railway Volume
+DATA_DIR = Path(os.environ.get('DATA_DIR', 'data'))
 DATA_DIR.mkdir(exist_ok=True)
+
+logger.info(f"📁 Data directory: {DATA_DIR.absolute()}")
 
 # Global state
 latest_alert = None
@@ -69,18 +59,33 @@ eew_engine = None
 monitoring_active = False
 
 # ============================================================================
-# DATA LOGGING FUNCTIONS (NEW!)
+# FILE NAMING CONVENTION: yymmdd-erthqk-type-vX.ext
 # ============================================================================
+def get_filename(file_type, version=1, extension='json'):
+    """
+    Generate filename with your convention: yymmdd-erthqk-type-vX.ext
 
+    Args:
+        file_type: usgs, iris, stats, export, model
+        version: version number (default 1)
+        extension: file extension (default json)
 
+    Returns:
+        Formatted filename string
+    """
+    date_str = datetime.now().strftime('%y%m%d')
+    return f"{date_str}-erthqk-{file_type}-v{version}.{extension}"
+
+# ============================================================================
+# DATA LOGGING FUNCTIONS (ENHANCED)
+# ============================================================================
 def log_earthquake_event(event, source='USGS'):
     """
     Log detected earthquake to daily JSON file
-    Stores all earthquake detections with metadata and system status
+    Uses naming convention: yymmdd-erthqk-usgs-v1.json
     """
     try:
-        today = datetime.now().strftime('%Y-%m-%d')
-        log_file = DATA_DIR / f'earthquake_log_{today}.json'
+        log_file = DATA_DIR / get_filename('usgs', version=1, extension='json')
 
         log_entry = {
             'timestamp': datetime.now().isoformat(),
@@ -105,20 +110,18 @@ def log_earthquake_event(event, source='USGS'):
         with open(log_file, 'w') as f:
             json.dump(logs, f, indent=2)
 
-        logger.info(
-            f"📝 Logged earthquake: {event.get('alert_id', 'unknown')} to {log_file.name}")
+        logger.info(f"📝 Logged: {event.get('alert_id', 'unknown')} → {log_file.name}")
 
     except Exception as e:
         logger.error(f"Error logging earthquake event: {e}")
 
-
 def log_iris_waveform_fetch(event_id, network, station, channel, success, error=None, n_samples=0, sampling_rate=0):
     """
     Log all IRIS waveform retrieval attempts
-    Tracks success/failure rates and data quality
+    Uses naming convention: yymmdd-erthqk-iris-v1.json
     """
     try:
-        log_file = DATA_DIR / 'iris_waveform_log.json'
+        log_file = DATA_DIR / get_filename('iris', version=1, extension='json')
 
         log_entry = {
             'timestamp': datetime.now().isoformat(),
@@ -153,33 +156,87 @@ def log_iris_waveform_fetch(event_id, network, station, channel, success, error=
     except Exception as e:
         logger.error(f"Error logging IRIS waveform fetch: {e}")
 
+def generate_daily_stats():
+    """
+    Generate daily statistics summary
+    Uses naming convention: yymmdd-erthqk-stats-v1.csv
+    """
+    try:
+        stats_file = DATA_DIR / get_filename('stats', version=1, extension='csv')
+
+        # Get today's earthquake log
+        usgs_file = DATA_DIR / get_filename('usgs', version=1, extension='json')
+        iris_file = DATA_DIR / get_filename('iris', version=1, extension='json')
+
+        stats = {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'total_earthquakes': 0,
+            'total_iris_fetches': 0,
+            'iris_success_rate': 0.0,
+            'max_magnitude': 0.0,
+            'min_magnitude': 10.0,
+            'avg_magnitude': 0.0
+        }
+
+        # Count earthquakes
+        if usgs_file.exists():
+            with open(usgs_file, 'r') as f:
+                logs = json.load(f)
+                stats['total_earthquakes'] = len(logs)
+                if logs:
+                    mags = [log['event']['magnitude'] for log in logs]
+                    stats['max_magnitude'] = max(mags)
+                    stats['min_magnitude'] = min(mags)
+                    stats['avg_magnitude'] = sum(mags) / len(mags)
+
+        # Count IRIS fetches
+        if iris_file.exists():
+            with open(iris_file, 'r') as f:
+                logs = json.load(f)
+                stats['total_iris_fetches'] = len(logs)
+                successful = sum(1 for log in logs if log.get('success'))
+                if logs:
+                    stats['iris_success_rate'] = successful / len(logs)
+
+        # Write CSV
+        with open(stats_file, 'w') as f:
+            f.write(','.join(stats.keys()) + '\n')
+            f.write(','.join(str(v) for v in stats.values()) + '\n')
+
+        logger.info(f"📊 Daily stats generated: {stats_file.name}")
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error generating daily stats: {e}")
+        return {}
 
 def get_log_summary():
     """
-    Generate summary statistics from logs
-    Useful for analysis and reporting
+    Generate summary statistics from all logs
     """
     try:
         summary = {
             'total_earthquakes_logged': 0,
             'total_iris_fetches': 0,
             'iris_success_rate': 0.0,
-            'date_range': {'start': None, 'end': None}
+            'date_range': {'start': None, 'end': None},
+            'data_files': []
         }
 
-        # Count earthquake logs
-        earthquake_logs = list(DATA_DIR.glob('earthquake_log_*.json'))
+        # Count all earthquake logs
+        earthquake_logs = list(DATA_DIR.glob('*-erthqk-usgs-*.json'))
         for log_file in earthquake_logs:
+            summary['data_files'].append(log_file.name)
             with open(log_file, 'r') as f:
                 logs = json.load(f)
                 summary['total_earthquakes_logged'] += len(logs)
 
-        # Count IRIS logs
-        iris_log = DATA_DIR / 'iris_waveform_log.json'
-        if iris_log.exists():
+        # Count all IRIS logs
+        iris_logs = list(DATA_DIR.glob('*-erthqk-iris-*.json'))
+        for iris_log in iris_logs:
             with open(iris_log, 'r') as f:
                 logs = json.load(f)
-                summary['total_iris_fetches'] = len(logs)
+                summary['total_iris_fetches'] += len(logs)
                 successful = sum(1 for log in logs if log.get('success'))
                 if logs:
                     summary['iris_success_rate'] = successful / len(logs)
@@ -193,8 +250,6 @@ def get_log_summary():
 # ============================================================================
 # DATA STRUCTURES
 # ============================================================================
-
-
 @dataclass
 class StationDetection:
     """Single station P-wave detection result"""
@@ -202,7 +257,6 @@ class StationDetection:
     detection_time: float
     delta_cmh: float
     confidence: float
-
 
 @dataclass
 class EarthquakeAlert:
@@ -220,18 +274,9 @@ class EarthquakeAlert:
 # ============================================================================
 # USGS EARTHQUAKE DATA FETCHER
 # ============================================================================
-
-
 def fetch_usgs_earthquakes(days=7, min_magnitude=4.5):
     """
     Fetch recent earthquakes from USGS GeoJSON feed
-
-    Args:
-        days: Number of days to look back
-        min_magnitude: Minimum magnitude to include
-
-    Returns:
-        List of earthquake events in standardized format
     """
     try:
         end_time = datetime.utcnow()
@@ -247,13 +292,14 @@ def fetch_usgs_earthquakes(days=7, min_magnitude=4.5):
             'limit': 100
         }
 
-        logger.info(
-            f"Fetching USGS earthquakes: {start_time} to {end_time}, M>={min_magnitude}")
+        logger.info(f"🌍 Fetching USGS earthquakes: {start_time} to {end_time}, M>={min_magnitude}")
+
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
-        data = response.json()
 
+        data = response.json()
         events = []
+
         for feature in data['features']:
             props = feature['properties']
             coords = feature['geometry']['coordinates']
@@ -270,22 +316,21 @@ def fetch_usgs_earthquakes(days=7, min_magnitude=4.5):
                 'confidence': 0.95,
                 'source': 'USGS'
             }
-            events.append(event)
 
-            # LOG EACH EVENT
+            events.append(event)
             log_earthquake_event(event, source='USGS')
 
         logger.info(f"✓ Fetched {len(events)} earthquakes from USGS")
         return events
 
     except Exception as e:
-        logger.error(f"Error fetching USGS data: {e}")
+        logger.error(f"❌ Error fetching USGS data: {e}")
         return []
-
 
 def populate_initial_history():
     """Load last 7 days of earthquakes on startup"""
     global alert_history
+
     logger.info("=" * 60)
     logger.info("LOADING HISTORICAL EARTHQUAKE DATA")
     logger.info("=" * 60)
@@ -295,13 +340,11 @@ def populate_initial_history():
     if events:
         alert_history.extend(events)
         logger.info(f"✓ Loaded {len(events)} earthquakes from last 7 days")
-        logger.info(
-            f"  Magnitude range: M{min(e['magnitude'] for e in events):.1f} - M{max(e['magnitude'] for e in events):.1f}")
+        logger.info(f"  Magnitude range: M{min(e['magnitude'] for e in events):.1f} - M{max(e['magnitude'] for e in events):.1f}")
     else:
         logger.warning("⚠ No historical earthquakes loaded")
 
     logger.info("=" * 60)
-
 
 def auto_update_earthquakes():
     """Background task to fetch new earthquakes every 10 minutes"""
@@ -313,22 +356,18 @@ def auto_update_earthquakes():
         try:
             time.sleep(600)  # Wait 10 minutes
 
-            # Fetch last 30 minutes of earthquakes
             logger.info("Checking for new earthquakes...")
-            recent_events = fetch_usgs_earthquakes(
-                days=0.021, min_magnitude=4.5)  # ~30 min
+            recent_events = fetch_usgs_earthquakes(days=0.021, min_magnitude=4.5)  # ~30 min
 
             # Add new events only
             existing_ids = {e.get('alert_id') for e in alert_history}
-            new_events = [
-                e for e in recent_events if e['alert_id'] not in existing_ids]
+            new_events = [e for e in recent_events if e['alert_id'] not in existing_ids]
 
             if new_events:
                 alert_history.extend(new_events)
                 logger.info(f"✓ Added {len(new_events)} new earthquake(s):")
                 for event in new_events:
-                    logger.info(
-                        f"  • M{event['magnitude']} - {event['location']}")
+                    logger.info(f"  • M{event['magnitude']} - {event['location']}")
 
                 # Update latest alert
                 global latest_alert
@@ -347,8 +386,6 @@ def auto_update_earthquakes():
 # ============================================================================
 # GEOLOCATION SUPPORT
 # ============================================================================
-
-
 class EarthquakeAlertWithGeolocation:
     """Calculate distance, lead time, and format coordinates"""
 
@@ -359,9 +396,10 @@ class EarthquakeAlertWithGeolocation:
         lat1_rad, lat2_rad = math.radians(lat1), math.radians(lat2)
         delta_lat = math.radians(lat2 - lat1)
         delta_lon = math.radians(lon2 - lon1)
-        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * \
-            math.cos(lat2_rad) * math.sin(delta_lon/2)**2
+
+        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) *             math.cos(lat2_rad) * math.sin(delta_lon/2)**2
         c = 2 * math.asin(math.sqrt(a))
+
         return R * c
 
     @staticmethod
@@ -378,15 +416,15 @@ class EarthquakeAlertWithGeolocation:
         minutes_decimal = (absolute_value - degrees) * 60
         minutes = int(minutes_decimal)
         seconds = (minutes_decimal - minutes) * 60
+
         direction = 'E' if (is_longitude and decimal > 0) else (
             'W' if is_longitude else ('N' if decimal > 0 else 'S'))
+
         return f"{degrees}°{minutes}'{seconds:.1f}\"{direction}"
 
 # ============================================================================
-# CMH DETECTOR
+# CMH DETECTOR (Placeholder for Phase 2)
 # ============================================================================
-
-
 class CMHDetector:
     """∆CMH Seismic Event Detector"""
 
@@ -413,8 +451,6 @@ class CMHDetector:
 # ============================================================================
 # MULTI-STATION CONSENSUS
 # ============================================================================
-
-
 class MultiStationConsensus:
     """Require multiple stations for earthquake confirmation"""
 
@@ -443,8 +479,6 @@ class MultiStationConsensus:
 # ============================================================================
 # MAGNITUDE ESTIMATION
 # ============================================================================
-
-
 class MagnitudeEstimator:
     """Estimate magnitude from ∆CMH integral values"""
 
@@ -453,6 +487,7 @@ class MagnitudeEstimator:
             return 0.0, 0.42
 
         median_integral = sorted(integrals)[len(integrals) // 2]
+
         a, b, c = 105.85, -9.62, 4.46
         magnitude = a * (median_integral ** b) + c
         magnitude = max(3.0, min(9.0, magnitude))
@@ -463,18 +498,16 @@ class MagnitudeEstimator:
 # ============================================================================
 # CMH EARLY WARNING SYSTEM
 # ============================================================================
-
-
 class CMHEarthquakeEarlyWarning:
     """Complete CMH EEW System"""
 
     def __init__(self, station_ids: List[str], sampling_rate: float = 100.0):
-        self.detectors = {sid: CMHDetector(
-            sid, sampling_rate) for sid in station_ids}
+        self.detectors = {sid: CMHDetector(sid, sampling_rate) for sid in station_ids}
         self.consensus = MultiStationConsensus(min_stations=3)
         self.magnitude_estimator = MagnitudeEstimator()
         self.alert_issued = False
         self.current_alert = None
+
         logger.info(f"EEW system initialized with {len(station_ids)} stations")
 
     def process(self) -> Optional[EarthquakeAlert]:
@@ -496,8 +529,8 @@ class CMHEarthquakeEarlyWarning:
             self.detectors[d.station_id].delta_cmh_integral
             for d in self.consensus.detections
         ]
-        magnitude, mag_uncertainty = self.magnitude_estimator.estimate(
-            integrals)
+
+        magnitude, mag_uncertainty = self.magnitude_estimator.estimate(integrals)
 
         estimated_lat, estimated_lon = 35.5, 138.5
         estimated_depth = 60
@@ -515,25 +548,23 @@ class CMHEarthquakeEarlyWarning:
         )
 
         alert.depth_km = estimated_depth
+
         self.alert_issued = True
         self.current_alert = alert
 
-        logger.warning(
-            f"🚨 EARTHQUAKE ALERT ISSUED: M{magnitude:.1f} ± {mag_uncertainty:.2f}")
+        logger.warning(f"🚨 EARTHQUAKE ALERT ISSUED: M{magnitude:.1f} ± {mag_uncertainty:.2f}")
 
         return alert
 
 # ============================================================================
 # EEW ENGINE
 # ============================================================================
-
-
 class EEWEngine:
     """Real-time earthquake monitoring engine"""
 
     def __init__(self):
         station_ids = [
-            "JA.KAMAE", "JA.OKW", "JA.WTNM", "JA.MZGH", "JA.SHIZu",
+            "JA.KAMAE", "JA.OKW", "JA.WTNM", "JA.MZGH", "JA.SHIZ",
             "CI.PAS", "CI.CLC", "CI.LRL", "CI.SBC", "CI.SMO",
             "BK.FARB", "BK.YBH", "BK.MCCM", "BK.SAO", "BK.CMB",
             "NC.A25K", "NC.H04P", "NC.O22K", "NC.Y27K", "NC.Z24K",
@@ -543,6 +574,7 @@ class EEWEngine:
             station_ids=station_ids,
             sampling_rate=100.0
         )
+
         self.last_poll_time = datetime.now()
         self.alert_count = 0
 
@@ -565,8 +597,6 @@ class EEWEngine:
 # ============================================================================
 # FLASK REST API ENDPOINTS
 # ============================================================================
-
-
 @app.route('/')
 def serve_dashboard():
     """Serve the main dashboard HTML"""
@@ -582,10 +612,10 @@ def serve_dashboard():
                 'latest_alert': '/api/latest-alert',
                 'alert_history': '/api/alert-history',
                 'test_historical': '/api/test-historical',
-                'log_summary': '/api/log-summary'
+                'log_summary': '/api/log-summary',
+                'download_data': '/api/download-data'
             }
         })
-
 
 @app.route('/api/status', methods=['GET'])
 def get_status():
@@ -594,9 +624,9 @@ def get_status():
         'status': 'running',
         'last_poll': eew_engine.last_poll_time.isoformat(),
         'alerts_issued': len(alert_history),
-        'active_stations': len(eew_engine.eew_system.detectors)
+        'active_stations': len(eew_engine.eew_system.detectors),
+        'data_directory': str(DATA_DIR.absolute())
     })
-
 
 @app.route('/api/latest-alert', methods=['GET'])
 def get_latest_alert():
@@ -605,24 +635,60 @@ def get_latest_alert():
         return jsonify(latest_alert)
     return jsonify({'status': 'no_alerts'})
 
-
 @app.route('/api/alert-history', methods=['GET'])
 def get_alert_history():
     """Get recent earthquake alerts"""
     recent = alert_history[-50:][::-1]
     return jsonify(recent)
 
-
 @app.route('/api/log-summary', methods=['GET'])
 def get_logs_summary():
-    """Get summary of logged data (NEW!)"""
+    """Get summary of logged data"""
     summary = get_log_summary()
     return jsonify(summary)
 
+@app.route('/api/download-data', methods=['GET'])
+def download_research_data():
+    """
+    Download all research data as ZIP file
+    Filename: yymmdd-erthqk-export-v1.zip
+    """
+    try:
+        # Create in-memory ZIP file
+        memory_file = io.BytesIO()
+
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Add all data files
+            for file in DATA_DIR.glob('*-erthqk-*.json'):
+                zf.write(file, file.name)
+
+            for file in DATA_DIR.glob('*-erthqk-*.csv'):
+                zf.write(file, file.name)
+
+            # Add summary
+            summary = get_log_summary()
+            zf.writestr('summary.json', json.dumps(summary, indent=2))
+
+        memory_file.seek(0)
+
+        zip_filename = get_filename('export', version=1, extension='zip')
+
+        logger.info(f"📦 Data export requested: {zip_filename}")
+
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=zip_filename
+        )
+
+    except Exception as e:
+        logger.error(f"Error creating data export: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/test-historical', methods=['GET'])
 def test_historical_quake():
-    """Test with real historical IRIS data + LOGGING"""
+    """Test with real historical IRIS data"""
     try:
         event_time = request.args.get('origin_time', '2011-03-11T05:46:18')
         net = request.args.get('network', 'IU')
@@ -636,6 +702,7 @@ def test_historical_quake():
             network=net, station=sta, location='00',
             channel=cha, starttime=t0, endtime=t0+dur
         )
+
         samples = st[0].data.tolist()
 
         # LOG SUCCESS
@@ -657,6 +724,7 @@ def test_historical_quake():
             'sampling_rate': st[0].stats.sampling_rate,
             'preview_signal': samples[:500],
         })
+
     except Exception as e:
         # LOG FAILURE
         log_iris_waveform_fetch(
@@ -667,13 +735,12 @@ def test_historical_quake():
             success=False,
             error=str(e)
         )
+
         return jsonify({'success': False, 'error': str(e)})
 
 # ============================================================================
 # BACKGROUND THREADS
 # ============================================================================
-
-
 def monitoring_thread():
     """Background thread for continuous monitoring"""
     global monitoring_active
@@ -689,8 +756,6 @@ def monitoring_thread():
 # ============================================================================
 # APPLICATION STARTUP
 # ============================================================================
-
-
 @app.before_request
 def initialize_app():
     """Initialize app on first request"""
@@ -698,7 +763,7 @@ def initialize_app():
 
     if eew_engine is None:
         logger.info("=" * 80)
-        logger.info("INITIALIZING CMH EARTHQUAKE EARLY WARNING SYSTEM")
+        logger.info("INITIALIZING CMH EARTHQUAKE EARLY WARNING SYSTEM v2.0")
         logger.info("=" * 80)
 
         eew_engine = EEWEngine()
@@ -714,47 +779,50 @@ def initialize_app():
         thread.start()
 
         # Start auto-update thread
-        update_thread = threading.Thread(
-            target=auto_update_earthquakes, daemon=True)
+        update_thread = threading.Thread(target=auto_update_earthquakes, daemon=True)
         update_thread.start()
 
         logger.info("✓ Background monitoring started")
         logger.info("✓ Auto-update enabled (checks every 10 minutes)")
-        logger.info("✓ Data logging enabled (data/ folder)")
+        logger.info(f"✓ Data logging enabled: {DATA_DIR.absolute()}")
+        logger.info("✓ File naming: yymmdd-erthqk-type-vX.ext")
         logger.info("=" * 80)
 
 # ============================================================================
 # APPLICATION ENTRY POINT
 # ============================================================================
-
-
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+
     print("=" * 80)
-    print("CMH EARTHQUAKE EARLY WARNING SYSTEM - IRIS REAL-TIME MONITOR")
+    print("CMH EARTHQUAKE EARLY WARNING SYSTEM v2.0 - IRIS REAL-TIME MONITOR")
     print("=" * 80)
     print()
     print(f"Backend: Flask API on http://localhost:{port}")
     print("Endpoints:")
-    print("  GET /                     - Dashboard")
-    print("  GET /api/status           - System status")
-    print("  GET /api/latest-alert     - Latest earthquake")
-    print("  GET /api/alert-history    - Alert history (last 50)")
-    print("  GET /api/test-historical  - Historical IRIS waveform demo")
-    print("  GET /api/log-summary      - Data logging statistics")
+    print("  GET /                       - Dashboard")
+    print("  GET /api/status             - System status")
+    print("  GET /api/latest-alert       - Latest earthquake")
+    print("  GET /api/alert-history      - Alert history (last 50)")
+    print("  GET /api/test-historical    - Historical IRIS waveform demo")
+    print("  GET /api/log-summary        - Data logging statistics")
+    print("  GET /api/download-data      - Download research data (ZIP)")
     print()
     print("Data Sources:")
     print("  • USGS: Real-time earthquake feed (M4.5+)")
     print("  • IRIS: Waveform data for events")
     print("  • Updates: Every 10 minutes")
     print()
-    print("Data Logging:")
-    print("  • Earthquake events: data/earthquake_log_YYYY-MM-DD.json")
-    print("  • IRIS waveforms: data/iris_waveform_log.json")
-    print("  • Summary stats: /api/log-summary")
+    print("Data Logging (yymmdd-erthqk-type-vX.ext):")
+    print(f"  • Directory: {DATA_DIR.absolute()}")
+    print("  • USGS events: yymmdd-erthqk-usgs-v1.json")
+    print("  • IRIS waveforms: yymmdd-erthqk-iris-v1.json")
+    print("  • Daily stats: yymmdd-erthqk-stats-v1.csv")
+    print("  • Data export: yymmdd-erthqk-export-v1.zip")
     print()
     print("=" * 80)
     print()
+
     app.run(
         host='0.0.0.0',
         port=port,
