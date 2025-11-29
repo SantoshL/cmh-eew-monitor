@@ -106,7 +106,6 @@
             position: relative;
         }
 
-        /* SCROLL INDICATOR - NEW! */
         .scroll-indicator {
             position: absolute;
             bottom: 20px;
@@ -116,21 +115,22 @@
             text-align: center;
             animation: bounce 2s infinite;
             cursor: pointer;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 15px 30px;
-            border-radius: 50px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 8px 20px;
+            border-radius: 25px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+            font-size: 0.85em;
         }
 
         .scroll-indicator-text {
             color: #667eea;
-            font-weight: bold;
-            font-size: 1.1em;
-            margin-bottom: 5px;
+            font-weight: 600;
+            font-size: 0.9em;
+            margin-bottom: 2px;
         }
 
         .scroll-arrow {
-            font-size: 2em;
+            font-size: 1.2em;
             color: #667eea;
         }
 
@@ -159,11 +159,12 @@
             right: 20px;
             z-index: 1000;
             background: rgba(255, 255, 255, 0.95);
-            padding: 15px 25px;
-            border-radius: 50px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            padding: 10px 20px;
+            border-radius: 25px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
             font-weight: bold;
             color: #667eea;
+            font-size: 0.9em;
         }
 
         .table-container {
@@ -172,6 +173,8 @@
             padding: 25px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
             margin-top: 30px;
+            max-height: 600px;
+            overflow-y: auto;
         }
 
         table {
@@ -187,6 +190,7 @@
             font-weight: 600;
             position: sticky;
             top: 0;
+            z-index: 10;
         }
 
         td {
@@ -194,13 +198,22 @@
             border-bottom: 1px solid #eee;
         }
 
+        tr {
+            transition: all 0.2s ease;
+        }
+
         tr:hover {
             background: #f0f0f0;
         }
 
         .row-highlight {
-            background: #fffbeb !important;
-            border-left: 4px solid #f59e0b;
+            background: #fef3c7 !important;
+            border-left: 4px solid #f59e0b !important;
+            font-weight: 600;
+        }
+
+        tbody tr {
+            cursor: pointer;
         }
 
         .magnitude {
@@ -319,7 +332,7 @@
             <div id="map"></div>
             <div class="event-counter" id="eventCounter">Loading...</div>
             <div class="scroll-indicator" onclick="scrollToTable()">
-                <div class="scroll-indicator-text">View Earthquake Data</div>
+                <div class="scroll-indicator-text">📊 View Data</div>
                 <div class="scroll-arrow">⬇</div>
             </div>
         </div>
@@ -364,7 +377,6 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Initialize map
         const map = L.map('map').setView([20, 0], 2);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
@@ -372,33 +384,27 @@
 
         let markers = {};
         let userLocation = null;
-        let hoverTimer = null;
         let earthquakeData = [];
 
-        // Fetch and display earthquake data
         async function fetchEarthquakes() {
             try {
                 const response = await fetch('/api/alert-history');
                 const data = await response.json();
                 earthquakeData = data;
 
-                // Update counter
-                document.getElementById('eventCounter').textContent = `${data.length} earthquakes detected`;
+                document.getElementById('eventCounter').textContent = `${data.length} events`;
 
-                // Clear existing markers
-                Object.values(markers).forEach(marker => marker.remove());
+                Object.values(markers).forEach(m => m.marker.remove());
                 markers = {};
 
-                // Add markers for each earthquake
                 data.forEach((event, index) => {
                     const lat = event.latitude;
                     const lon = event.longitude;
                     const mag = event.magnitude;
 
-                    // Color by magnitude
-                    let color = '#fbbf24'; // Yellow for M4.5-5
-                    if (mag >= 6) color = '#ef4444'; // Red for M6+
-                    else if (mag >= 5) color = '#f97316'; // Orange for M5-6
+                    let color = '#fbbf24';
+                    if (mag >= 6) color = '#ef4444';
+                    else if (mag >= 5) color = '#f97316';
 
                     const marker = L.circleMarker([lat, lon], {
                         radius: Math.max(5, mag * 2),
@@ -409,63 +415,44 @@
                         fillOpacity: 0.7
                     }).addTo(map);
 
-                    // Create popup with warning circles
-                    const popupContent = createPopupContent(event);
+                    const popupContent = `
+                        <div style="text-align: center;">
+                            <h3 style="color: #667eea; margin-bottom: 10px;">M${mag} Earthquake</h3>
+                            <p><strong>Location:</strong> ${event.location || 'Unknown'}</p>
+                            <p><strong>Time:</strong> ${new Date(event.detection_time).toUTCString()}</p>
+                            <p><strong>Depth:</strong> ${event.depth_km} km</p>
+                            <p><strong>Coordinates:</strong> ${lat.toFixed(2)}°, ${lon.toFixed(2)}°</p>
+                            <hr style="margin: 10px 0;">
+                            <p style="font-size: 0.9em; color: #666;"><strong>Warning Zones:</strong></p>
+                            <p style="font-size: 0.85em;">🔵 50 km: ~${Math.round(50 / 3.5 - 50 / 6)}s warning</p>
+                            <p style="font-size: 0.85em;">🟢 200 km: ~${Math.round(200 / 3.5 - 200 / 6)}s warning</p>
+                            <p style="font-size: 0.85em;">🟡 500 km: ~${Math.round(500 / 3.5 - 500 / 6)}s warning</p>
+                        </div>
+                    `;
                     marker.bindPopup(popupContent, { maxWidth: 300 });
 
-                    // Hover effects
                     marker.on('mouseover', function () {
                         highlightTableRow(index);
-
-                        // Auto-zoom on 0.5s hover
-                        hoverTimer = setTimeout(() => {
-                            map.flyTo([lat, lon], 6, { duration: 1 });
-                            marker.openPopup();
-                        }, 500);
+                        marker.setStyle({ weight: 4, fillOpacity: 1 });
                     });
 
                     marker.on('mouseout', function () {
                         unhighlightTableRows();
-                        clearTimeout(hoverTimer);
+                        marker.setStyle({ weight: 2, fillOpacity: 0.7 });
                     });
 
-                    markers[event.alert_id] = marker;
+                    marker.on('click', function () {
+                        marker.openPopup();
+                    });
+
+                    markers[event.alert_id] = { marker: marker, index: index, lat: lat, lon: lon };
                 });
 
-                // Update table
                 updateTable(data);
 
             } catch (error) {
                 console.error('Error fetching earthquakes:', error);
             }
-        }
-
-        function createPopupContent(event) {
-            const leadTime10 = calculateLeadTime(50); // 50km ~ 10s
-            const leadTime20 = calculateLeadTime(200); // 200km ~ 20s
-
-            return `
-                <div style="text-align: center;">
-                    <h3 style="color: #667eea; margin-bottom: 10px;">M${event.magnitude} Earthquake</h3>
-                    <p><strong>Location:</strong> ${event.location || 'Unknown'}</p>
-                    <p><strong>Time:</strong> ${new Date(event.detection_time).toUTCString()}</p>
-                    <p><strong>Depth:</strong> ${event.depth_km} km</p>
-                    <p><strong>Coordinates:</strong> ${event.latitude.toFixed(2)}°, ${event.longitude.toFixed(2)}°</p>
-                    <hr style="margin: 10px 0;">
-                    <p style="font-size: 0.9em; color: #666;"><strong>Warning Zones:</strong></p>
-                    <p style="font-size: 0.85em;">🔵 50 km radius: ~${leadTime10}s warning</p>
-                    <p style="font-size: 0.85em;">🟢 200 km radius: ~${leadTime20}s warning</p>
-                    <p style="font-size: 0.85em;">🟡 500 km radius: ~${calculateLeadTime(500)}s warning</p>
-                </div>
-            `;
-        }
-
-        function calculateLeadTime(distanceKm) {
-            const pWaveVelocity = 6.0; // km/s
-            const sWaveVelocity = 3.5; // km/s
-            const pTime = distanceKm / pWaveVelocity;
-            const sTime = distanceKm / sWaveVelocity;
-            return Math.round(sTime - pTime);
         }
 
         function updateTable(data) {
@@ -480,7 +467,10 @@
                 const time = new Date(event.detection_time).toUTCString();
 
                 return `
-                    <tr id="row-${index}" onmouseenter="highlightMarker('${event.alert_id}')" onmouseleave="unhighlightMarker('${event.alert_id}')">
+                    <tr id="row-${index}" 
+                        onmouseenter="highlightMarker('${event.alert_id}')" 
+                        onmouseleave="unhighlightMarker('${event.alert_id}')"
+                        onclick="jumpToMarker('${event.alert_id}')">
                         <td>${time}</td>
                         <td><span class="magnitude ${magClass}">M${event.magnitude}</span></td>
                         <td>${event.location || 'Unknown'}</td>
@@ -498,7 +488,12 @@
             const row = document.getElementById(`row-${index}`);
             if (row) {
                 row.classList.add('row-highlight');
-                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                const tableContainer = document.getElementById('tableContainer');
+                const rowRect = row.getBoundingClientRect();
+                const containerRect = tableContainer.getBoundingClientRect();
+                if (rowRect.top < containerRect.top || rowRect.bottom > containerRect.bottom) {
+                    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
             }
         }
 
@@ -509,16 +504,25 @@
         }
 
         function highlightMarker(alertId) {
-            const marker = markers[alertId];
-            if (marker) {
-                marker.setStyle({ weight: 4, fillOpacity: 1 });
+            const markerData = markers[alertId];
+            if (markerData) {
+                markerData.marker.setStyle({ weight: 4, fillOpacity: 1 });
             }
         }
 
         function unhighlightMarker(alertId) {
-            const marker = markers[alertId];
-            if (marker) {
-                marker.setStyle({ weight: 2, fillOpacity: 0.7 });
+            const markerData = markers[alertId];
+            if (markerData) {
+                markerData.marker.setStyle({ weight: 2, fillOpacity: 0.7 });
+            }
+        }
+
+        function jumpToMarker(alertId) {
+            const markerData = markers[alertId];
+            if (markerData) {
+                map.flyTo([markerData.lat, markerData.lon], 6, { duration: 1 });
+                markerData.marker.openPopup();
+                document.getElementById('map').scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
         }
 
@@ -529,7 +533,6 @@
             });
         }
 
-        // Update system status
         async function updateStatus() {
             try {
                 const response = await fetch('/api/status');
@@ -573,11 +576,9 @@
             document.getElementById('alertModal').style.display = 'none';
         }
 
-        // Initialize
         updateStatus();
         fetchEarthquakes();
 
-        // Auto-refresh every 2 minutes
         setInterval(() => {
             updateStatus();
             fetchEarthquakes();
