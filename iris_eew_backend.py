@@ -34,6 +34,7 @@ import io
 from obspy.clients.fdsn import Client as IRISClient
 from obspy import UTCDateTime
 # Import SeedLink EEW Pipeline
+from performance_charts import PerformanceCharts  #
 from seedlink_eew_integration import EEWPipeline
 # ============================================================================
 # CONFIGURATION
@@ -914,6 +915,57 @@ def stop_seedlink():
     return jsonify({
         'status': 'stopped',
         'message': 'SeedLink listener stopped'
+    })
+
+# ============================================================================
+# PERFORMANCE CHARTS ENDPOINTS
+# ============================================================================
+
+
+# Initialize chart generator
+chart_generator = PerformanceCharts(DATA_DIR)
+
+
+@app.route('/api/performance-charts', methods=['GET'])
+def get_performance_charts():
+    """Generate and return performance run charts"""
+    try:
+        days = request.args.get('days', 90, type=int)
+        charts = chart_generator.generate_all_charts(days=days)
+
+        return jsonify({
+            'status': 'success',
+            'charts_generated': len(charts),
+            'charts': [str(c.name) for c in charts]
+        })
+    except Exception as e:
+        logger.error(f"Error generating charts: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/charts/hart_name>', methods=['GET'])
+def serve_chart(chart_name):
+    """Serve generated chart images"""
+    chart_path = DATA_DIR / 'charts' / chart_name
+
+    if chart_path.exists():
+        return send_file(str(chart_path), mimetype='image/png')
+    else:
+        return jsonify({'error': 'Chart not found'}), 404
+
+
+@app.route('/api/chart-status', methods=['GET'])
+def chart_status():
+    """Check which charts are available"""
+    charts_dir = DATA_DIR / 'charts'
+    if not charts_dir.exists():
+        return jsonify({'status': 'no_charts', 'charts': []})
+
+    charts = list(charts_dir.glob('*.png'))
+    return jsonify({
+        'status': 'ok',
+        'total_charts': len(charts),
+        'charts': [c.name for c in charts]
     })
 
 
