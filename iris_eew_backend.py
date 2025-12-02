@@ -33,7 +33,8 @@ import io
 # Import ObsPy for IRIS waveform retrieval
 from obspy.clients.fdsn import Client as IRISClient
 from obspy import UTCDateTime
-
+# Import SeedLink EEW Pipeline
+from seedlink_eew_integration import EEWPipeline
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -57,10 +58,15 @@ latest_alert = None
 alert_history = []
 eew_engine = None
 monitoring_active = False
+# SeedLink EEW Pipeline
+seedlink_pipeline = None
+seedlink_running = False
 
 # ============================================================================
 # FILE NAMING CONVENTION: yymmdd-erthqk-type-vX.ext
 # ============================================================================
+
+
 def get_filename(file_type, version=1, extension='json'):
     """
     Generate filename with your convention: yymmdd-erthqk-type-vX.ext
@@ -79,6 +85,8 @@ def get_filename(file_type, version=1, extension='json'):
 # ============================================================================
 # DATA LOGGING FUNCTIONS (ENHANCED)
 # ============================================================================
+
+
 def log_earthquake_event(event, source='USGS'):
     """
     Log detected earthquake to daily JSON file
@@ -110,10 +118,12 @@ def log_earthquake_event(event, source='USGS'):
         with open(log_file, 'w') as f:
             json.dump(logs, f, indent=2)
 
-        logger.info(f"📝 Logged: {event.get('alert_id', 'unknown')} → {log_file.name}")
+        logger.info(
+            f"📝 Logged: {event.get('alert_id', 'unknown')} → {log_file.name}")
 
     except Exception as e:
         logger.error(f"Error logging earthquake event: {e}")
+
 
 def log_iris_waveform_fetch(event_id, network, station, channel, success, error=None, n_samples=0, sampling_rate=0):
     """
@@ -156,17 +166,21 @@ def log_iris_waveform_fetch(event_id, network, station, channel, success, error=
     except Exception as e:
         logger.error(f"Error logging IRIS waveform fetch: {e}")
 
+
 def generate_daily_stats():
     """
     Generate daily statistics summary
     Uses naming convention: yymmdd-erthqk-stats-v1.csv
     """
     try:
-        stats_file = DATA_DIR / get_filename('stats', version=1, extension='csv')
+        stats_file = DATA_DIR / \
+            get_filename('stats', version=1, extension='csv')
 
         # Get today's earthquake log
-        usgs_file = DATA_DIR / get_filename('usgs', version=1, extension='json')
-        iris_file = DATA_DIR / get_filename('iris', version=1, extension='json')
+        usgs_file = DATA_DIR / \
+            get_filename('usgs', version=1, extension='json')
+        iris_file = DATA_DIR / \
+            get_filename('iris', version=1, extension='json')
 
         stats = {
             'date': datetime.now().strftime('%Y-%m-%d'),
@@ -210,6 +224,7 @@ def generate_daily_stats():
         logger.error(f"Error generating daily stats: {e}")
         return {}
 
+
 def get_log_summary():
     """
     Generate summary statistics from all logs
@@ -250,6 +265,8 @@ def get_log_summary():
 # ============================================================================
 # DATA STRUCTURES
 # ============================================================================
+
+
 @dataclass
 class StationDetection:
     """Single station P-wave detection result"""
@@ -257,6 +274,7 @@ class StationDetection:
     detection_time: float
     delta_cmh: float
     confidence: float
+
 
 @dataclass
 class EarthquakeAlert:
@@ -274,6 +292,8 @@ class EarthquakeAlert:
 # ============================================================================
 # USGS EARTHQUAKE DATA FETCHER
 # ============================================================================
+
+
 def fetch_usgs_earthquakes(days=7, min_magnitude=4.5):
     """
     Fetch recent earthquakes from USGS GeoJSON feed
@@ -292,7 +312,8 @@ def fetch_usgs_earthquakes(days=7, min_magnitude=4.5):
             'limit': 100
         }
 
-        logger.info(f"🌍 Fetching USGS earthquakes: {start_time} to {end_time}, M>={min_magnitude}")
+        logger.info(
+            f"🌍 Fetching USGS earthquakes: {start_time} to {end_time}, M>={min_magnitude}")
 
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
@@ -327,6 +348,7 @@ def fetch_usgs_earthquakes(days=7, min_magnitude=4.5):
         logger.error(f"❌ Error fetching USGS data: {e}")
         return []
 
+
 def populate_initial_history():
     """Load last 7 days of earthquakes on startup"""
     global alert_history
@@ -340,11 +362,13 @@ def populate_initial_history():
     if events:
         alert_history.extend(events)
         logger.info(f"✓ Loaded {len(events)} earthquakes from last 7 days")
-        logger.info(f"  Magnitude range: M{min(e['magnitude'] for e in events):.1f} - M{max(e['magnitude'] for e in events):.1f}")
+        logger.info(
+            f"  Magnitude range: M{min(e['magnitude'] for e in events):.1f} - M{max(e['magnitude'] for e in events):.1f}")
     else:
         logger.warning("⚠ No historical earthquakes loaded")
 
     logger.info("=" * 60)
+
 
 def auto_update_earthquakes():
     """Background task to fetch new earthquakes every 10 minutes"""
@@ -357,17 +381,20 @@ def auto_update_earthquakes():
             time.sleep(600)  # Wait 10 minutes
 
             logger.info("Checking for new earthquakes...")
-            recent_events = fetch_usgs_earthquakes(days=0.021, min_magnitude=4.5)  # ~30 min
+            recent_events = fetch_usgs_earthquakes(
+                days=0.021, min_magnitude=4.5)  # ~30 min
 
             # Add new events only
             existing_ids = {e.get('alert_id') for e in alert_history}
-            new_events = [e for e in recent_events if e['alert_id'] not in existing_ids]
+            new_events = [
+                e for e in recent_events if e['alert_id'] not in existing_ids]
 
             if new_events:
                 alert_history.extend(new_events)
                 logger.info(f"✓ Added {len(new_events)} new earthquake(s):")
                 for event in new_events:
-                    logger.info(f"  • M{event['magnitude']} - {event['location']}")
+                    logger.info(
+                        f"  • M{event['magnitude']} - {event['location']}")
 
                 # Update latest alert
                 global latest_alert
@@ -386,6 +413,8 @@ def auto_update_earthquakes():
 # ============================================================================
 # GEOLOCATION SUPPORT
 # ============================================================================
+
+
 class EarthquakeAlertWithGeolocation:
     """Calculate distance, lead time, and format coordinates"""
 
@@ -397,7 +426,8 @@ class EarthquakeAlertWithGeolocation:
         delta_lat = math.radians(lat2 - lat1)
         delta_lon = math.radians(lon2 - lon1)
 
-        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) *             math.cos(lat2_rad) * math.sin(delta_lon/2)**2
+        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * \
+            math.cos(lat2_rad) * math.sin(delta_lon/2)**2
         c = 2 * math.asin(math.sqrt(a))
 
         return R * c
@@ -425,6 +455,8 @@ class EarthquakeAlertWithGeolocation:
 # ============================================================================
 # CMH DETECTOR (Placeholder for Phase 2)
 # ============================================================================
+
+
 class CMHDetector:
     """∆CMH Seismic Event Detector"""
 
@@ -451,6 +483,8 @@ class CMHDetector:
 # ============================================================================
 # MULTI-STATION CONSENSUS
 # ============================================================================
+
+
 class MultiStationConsensus:
     """Require multiple stations for earthquake confirmation"""
 
@@ -479,6 +513,8 @@ class MultiStationConsensus:
 # ============================================================================
 # MAGNITUDE ESTIMATION
 # ============================================================================
+
+
 class MagnitudeEstimator:
     """Estimate magnitude from ∆CMH integral values"""
 
@@ -498,11 +534,14 @@ class MagnitudeEstimator:
 # ============================================================================
 # CMH EARLY WARNING SYSTEM
 # ============================================================================
+
+
 class CMHEarthquakeEarlyWarning:
     """Complete CMH EEW System"""
 
     def __init__(self, station_ids: List[str], sampling_rate: float = 100.0):
-        self.detectors = {sid: CMHDetector(sid, sampling_rate) for sid in station_ids}
+        self.detectors = {sid: CMHDetector(
+            sid, sampling_rate) for sid in station_ids}
         self.consensus = MultiStationConsensus(min_stations=3)
         self.magnitude_estimator = MagnitudeEstimator()
         self.alert_issued = False
@@ -530,7 +569,8 @@ class CMHEarthquakeEarlyWarning:
             for d in self.consensus.detections
         ]
 
-        magnitude, mag_uncertainty = self.magnitude_estimator.estimate(integrals)
+        magnitude, mag_uncertainty = self.magnitude_estimator.estimate(
+            integrals)
 
         estimated_lat, estimated_lon = 35.5, 138.5
         estimated_depth = 60
@@ -552,13 +592,16 @@ class CMHEarthquakeEarlyWarning:
         self.alert_issued = True
         self.current_alert = alert
 
-        logger.warning(f"🚨 EARTHQUAKE ALERT ISSUED: M{magnitude:.1f} ± {mag_uncertainty:.2f}")
+        logger.warning(
+            f"🚨 EARTHQUAKE ALERT ISSUED: M{magnitude:.1f} ± {mag_uncertainty:.2f}")
 
         return alert
 
 # ============================================================================
 # EEW ENGINE
 # ============================================================================
+
+
 class EEWEngine:
     """Real-time earthquake monitoring engine"""
 
@@ -597,6 +640,8 @@ class EEWEngine:
 # ============================================================================
 # FLASK REST API ENDPOINTS
 # ============================================================================
+
+
 @app.route('/')
 def serve_dashboard():
     """Serve the main dashboard HTML"""
@@ -617,6 +662,7 @@ def serve_dashboard():
             }
         })
 
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get system status"""
@@ -628,6 +674,7 @@ def get_status():
         'data_directory': str(DATA_DIR.absolute())
     })
 
+
 @app.route('/api/latest-alert', methods=['GET'])
 def get_latest_alert():
     """Get latest earthquake alert"""
@@ -635,17 +682,20 @@ def get_latest_alert():
         return jsonify(latest_alert)
     return jsonify({'status': 'no_alerts'})
 
+
 @app.route('/api/alert-history', methods=['GET'])
 def get_alert_history():
     """Get recent earthquake alerts"""
     recent = alert_history[-50:][::-1]
     return jsonify(recent)
 
+
 @app.route('/api/log-summary', methods=['GET'])
 def get_logs_summary():
     """Get summary of logged data"""
     summary = get_log_summary()
     return jsonify(summary)
+
 
 @app.route('/api/download-data', methods=['GET'])
 def download_research_data():
@@ -685,6 +735,7 @@ def download_research_data():
     except Exception as e:
         logger.error(f"Error creating data export: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/test-historical', methods=['GET'])
 def test_historical_quake():
@@ -741,6 +792,8 @@ def test_historical_quake():
 # ============================================================================
 # BACKGROUND THREADS
 # ============================================================================
+
+
 def monitoring_thread():
     """Background thread for continuous monitoring"""
     global monitoring_active
@@ -756,6 +809,8 @@ def monitoring_thread():
 # ============================================================================
 # APPLICATION STARTUP
 # ============================================================================
+
+
 @app.before_request
 def initialize_app():
     """Initialize app on first request"""
@@ -779,7 +834,8 @@ def initialize_app():
         thread.start()
 
         # Start auto-update thread
-        update_thread = threading.Thread(target=auto_update_earthquakes, daemon=True)
+        update_thread = threading.Thread(
+            target=auto_update_earthquakes, daemon=True)
         update_thread.start()
 
         logger.info("✓ Background monitoring started")
@@ -788,9 +844,79 @@ def initialize_app():
         logger.info("✓ File naming: yymmdd-erthqk-type-vX.ext")
         logger.info("=" * 80)
 
+
 # ============================================================================
 # APPLICATION ENTRY POINT
 # ============================================================================
+# ============================================================================
+# SEEDLINK REAL-TIME EEW ENDPOINTS
+# ============================================================================
+
+@app.route('/api/seedlink/start', methods=['POST'])
+def start_seedlink():
+    """Start real-time SeedLink listener"""
+    global seedlink_pipeline, seedlink_running
+    try:
+        if seedlink_pipeline is None:
+            seedlink_pipeline = EEWPipeline()
+
+        if seedlink_pipeline.start():
+            seedlink_running = True
+            logger.info("✓ SeedLink pipeline started")
+            return jsonify({
+                'status': 'started',
+                'message': 'SeedLink listener running',
+                'pipeline': seedlink_pipeline.get_status()
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to start pipeline'
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error starting SeedLink: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/seedlink/status', methods=['GET'])
+def get_seedlink_status():
+    """Get SeedLink pipeline status"""
+    if seedlink_pipeline is None:
+        return jsonify({'status': 'not_initialized'})
+
+    return jsonify(seedlink_pipeline.get_status())
+
+
+@app.route('/api/seedlink/alerts', methods=['GET'])
+def get_seedlink_alerts():
+    """Get recent SeedLink-based alerts"""
+    if seedlink_pipeline is None:
+        return jsonify([])
+
+    n = request.args.get('limit', 10, type=int)
+    return jsonify(seedlink_pipeline.get_recent_alerts(n))
+
+
+@app.route('/api/seedlink/stop', methods=['POST'])
+def stop_seedlink():
+    """Stop SeedLink listener"""
+    global seedlink_pipeline, seedlink_running
+
+    if seedlink_pipeline:
+        seedlink_pipeline.stop()
+        seedlink_running = False
+        logger.info("✓ SeedLink pipeline stopped")
+
+    return jsonify({
+        'status': 'stopped',
+        'message': 'SeedLink listener stopped'
+    })
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
 
