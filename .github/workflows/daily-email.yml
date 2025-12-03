@@ -1,0 +1,160 @@
+name: Daily Earthquake Report Email
+
+on:
+  schedule:
+    # Runs every day at 9:00 AM IST (3:30 AM UTC)
+    - cron: '30 3 * * *'
+  workflow_dispatch:  # Allows manual trigger for testing
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Fetch Daily Report
+      id: fetch
+      run: |
+        REPORT=$(curl -s https://web-production-3c23.up.railway.app/api/send-daily-report)
+        echo "$REPORT" | jq '.'
+        
+        # Extract values for email
+        DATE=$(echo "$REPORT" | jq -r '.date')
+        STATUS=$(echo "$REPORT" | jq -r '.system_status')
+        ALERTS_TODAY=$(echo "$REPORT" | jq -r '.alerts_today')
+        TOTAL_ALERTS=$(echo "$REPORT" | jq -r '.total_alerts')
+        MAX_MAG=$(echo "$REPORT" | jq -r '.max_magnitude_today')
+        STATIONS=$(echo "$REPORT" | jq -r '.active_stations')
+        
+        # Latest alert details
+        LATEST_MAG=$(echo "$REPORT" | jq -r '.latest_alert.magnitude // "N/A"')
+        LATEST_LOC=$(echo "$REPORT" | jq -r '.latest_alert.location // "No recent alerts"')
+        LATEST_DEPTH=$(echo "$REPORT" | jq -r '.latest_alert.depth_km // "N/A"')
+        LATEST_TIME=$(echo "$REPORT" | jq -r '.latest_alert.detection_time // "N/A"')
+        LATEST_LAT=$(echo "$REPORT" | jq -r '.latest_alert.latitude // "N/A"')
+        LATEST_LON=$(echo "$REPORT" | jq -r '.latest_alert.longitude // "N/A"')
+        
+        # Save to environment
+        echo "DATE=$DATE" >> $GITHUB_ENV
+        echo "STATUS=$STATUS" >> $GITHUB_ENV
+        echo "ALERTS_TODAY=$ALERTS_TODAY" >> $GITHUB_ENV
+        echo "TOTAL_ALERTS=$TOTAL_ALERTS" >> $GITHUB_ENV
+        echo "MAX_MAG=$MAX_MAG" >> $GITHUB_ENV
+        echo "STATIONS=$STATIONS" >> $GITHUB_ENV
+        echo "LATEST_MAG=$LATEST_MAG" >> $GITHUB_ENV
+        echo "LATEST_LOC=$LATEST_LOC" >> $GITHUB_ENV
+        echo "LATEST_DEPTH=$LATEST_DEPTH" >> $GITHUB_ENV
+        echo "LATEST_TIME=$LATEST_TIME" >> $GITHUB_ENV
+        echo "LATEST_LAT=$LATEST_LAT" >> $GITHUB_ENV
+        echo "LATEST_LON=$LATEST_LON" >> $GITHUB_ENV
+    
+    - name: Send Email Report
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USER }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: 🌍 CMH EEW Daily Report - ${{ env.DATE }}
+        to: ${{ secrets.EMAIL_TO }}
+        from: CMH Earthquake Monitor <${{ secrets.EMAIL_USER }}>
+        html_body: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }
+              .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+              .header h1 { margin: 0; font-size: 28px; }
+              .header h2 { margin: 10px 0 0 0; font-size: 18px; opacity: 0.9; }
+              .content { background: #f8f9fa; padding: 20px; }
+              .stat-box { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+              .alert-box { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 20px; border-radius: 8px; margin: 15px 0; }
+              .success-box { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 15px; border-radius: 8px; margin: 15px 0; }
+              table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+              th, td { padding: 12px; text-align: left; }
+              th { background: #667eea; color: white; font-weight: 600; }
+              tr:nth-child(even) { background: #f8f9fa; }
+              .metric-value { font-size: 32px; font-weight: bold; color: #667eea; }
+              .footer { background: #2c3e50; color: #ecf0f1; padding: 20px; text-align: center; border-radius: 0 0 10px 10px; font-size: 12px; }
+              .button { display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>🌍 CMH Earthquake Early Warning System</h1>
+              <h2>Daily Report - ${{ env.DATE }}</h2>
+            </div>
+            
+            <div class="content">
+              <div class="success-box">
+                <h3 style="margin-top: 0;">✅ System Status: ${{ env.STATUS }}</h3>
+                <p style="margin-bottom: 0;">All ${{ env.STATIONS }} seismic stations are actively monitoring global earthquake activity.</p>
+              </div>
+              
+              <div class="stat-box">
+                <h3 style="margin-top: 0; color: #667eea;">📊 Today's Summary</h3>
+                <table>
+                  <tr>
+                    <th>Metric</th>
+                    <th style="text-align: center;">Value</th>
+                  </tr>
+                  <tr>
+                    <td><strong>Earthquakes Detected Today</strong></td>
+                    <td style="text-align: center;"><span class="metric-value">${{ env.ALERTS_TODAY }}</span></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Total Earthquakes (All Time)</strong></td>
+                    <td style="text-align: center;"><span class="metric-value">${{ env.TOTAL_ALERTS }}</span></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Maximum Magnitude Today</strong></td>
+                    <td style="text-align: center;"><span class="metric-value">M${{ env.MAX_MAG }}</span></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Active Monitoring Stations</strong></td>
+                    <td style="text-align: center;"><span class="metric-value">${{ env.STATIONS }}</span></td>
+                  </tr>
+                </table>
+              </div>
+              
+              <div class="alert-box">
+                <h3 style="margin-top: 0;">🚨 Latest Earthquake Alert</h3>
+                <table style="color: white;">
+                  <tr>
+                    <td><strong>Magnitude:</strong></td>
+                    <td>M${{ env.LATEST_MAG }}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Location:</strong></td>
+                    <td>${{ env.LATEST_LOC }}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Depth:</strong></td>
+                    <td>${{ env.LATEST_DEPTH }} km</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Detection Time:</strong></td>
+                    <td>${{ env.LATEST_TIME }}</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Coordinates:</strong></td>
+                    <td>${{ env.LATEST_LAT }}, ${{ env.LATEST_LON }}</td>
+                  </tr>
+                </table>
+              </div>
+              
+              <div class="stat-box" style="text-align: center;">
+                <h3 style="color: #667eea;">Quick Actions</h3>
+                <a href="https://web-production-3c23.up.railway.app" class="button">📊 View Live Dashboard</a>
+                <a href="https://web-production-3c23.up.railway.app/api/download-data" class="button">📥 Download Research Data</a>
+              </div>
+            </div>
+            
+            <div class="footer">
+              <p style="margin: 5px 0;"><strong>CMH Earthquake Early Warning System v2.0</strong></p>
+              <p style="margin: 5px 0;">Monitoring 20 seismic stations globally | Real-time USGS integration</p>
+              <p style="margin: 5px 0; opacity: 0.7;">This is an automated daily report. Do not reply to this email.</p>
+            </div>
+          </body>
+          </html>
+
