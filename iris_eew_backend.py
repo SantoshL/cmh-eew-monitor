@@ -32,6 +32,8 @@ import io
 
 # Import ObsPy for IRIS waveform retrieval
 from obspy.clients.fdsn import Client as IRISClient
+from seedlink_handler import SeedLinkManager
+from seedlink_handler import SeedLinkManager
 from obspy import UTCDateTime
 # Import SeedLink EEW Pipeline
 from performance_charts import PerformanceCharts  #
@@ -604,39 +606,204 @@ class CMHEarthquakeEarlyWarning:
 
 
 class EEWEngine:
-    """Real-time earthquake monitoring engine"""
+    """Real-time earthquake monitoring engine with SeedLink"""
 
     def __init__(self):
-        station_ids = [
-            "JA.KAMAE", "JA.OKW", "JA.WTNM", "JA.MZGH", "JA.SHIZ",
-            "CI.PAS", "CI.CLC", "CI.LRL", "CI.SBC", "CI.SMO",
-            "BK.FARB", "BK.YBH", "BK.MCCM", "BK.SAO", "BK.CMB",
-            "NC.A25K", "NC.H04P", "NC.O22K", "NC.Y27K", "NC.Z24K",
-        ] + [f"MOCK.ST{i:02d}" for i in range(1, 81)]
+        # Real stations - 20 global coverage
+        self.stations = [
+            ("JA", "KAMAE"), ("JA", "OKW"), ("JA",
+                                             "WTNM"), ("JA", "MZGH"), ("JA", "SHIZ"),
+            ("CI", "PAS"), ("CI", "CLC"), ("CI",
+                                           "LRL"), ("CI", "SBC"), ("CI", "SMO"),
+            ("BK", "FARB"), ("BK", "YBH"), ("BK",
+                                            "MCCM"), ("BK", "SAO"), ("BK", "CMB"),
+            ("NC", "A25K"), ("NC", "H04P"), ("NC",
+                                             "O22K"), ("NC", "Y27K"), ("NC", "Z24K"),
+        ]
 
+        self.seedlink_manager = None
+        self.detections = []
+        self.last_poll_time = datetime.now()
+        self.alert_count = 0
+
+        # Create old EEW system for compatibility
+        station_ids = [f"{net}.{sta}" for net, sta in self.stations]
         self.eew_system = CMHEarthquakeEarlyWarning(
             station_ids=station_ids,
             sampling_rate=100.0
         )
 
+    def on_detection(self, detection):
+        """Callback when P-wave detected"""
+        logger.warning(
+            f"🚨 P-WAVE: {detection['station_id']} ΔCMH={detection['delta_cmh']:.3f}")
+
+        # Log detection
+        self.detections.append(detection)
+
+        # Keep only last 100 detections
+        if len(self.detections) > 100:
+            self.detections.pop(0)
+
+        # Check for multi-station consensus (3+ stations within 10 seconds)
+        recent_time = detection['detection_time']
+        recent_detections = [
+            d for d in self.detections
+            if abs(d['detection_time'] - recent_time) < 10
+        ]
+
+        if len(recent_detections) >= 3:
+            self.issue_alert(recent_detections)
+
+    def issue_alert(self, detections):
+        """Issue earthquake alert from multiple detections"""
+        global latest_alert, alert_history
+
+        # Estimate magnitude from average delta CMH
+        avg_delta_cmh = sum(d['delta_cmh']
+                            for d in detections) / len(detections)
+        magnitude = max(3.0, min(9.0, 4.0 + (avg_delta_cmh * 10)))
+
+        alert = {
+            'alertid': f"CMH-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            'detectiontime': datetime.now().isoformat(),
+            'numstations': len(detections),
+            'estimatedmagnitude': round(magnitude, 1),
+            'magnitudeuncertainty': 0.5,
+            'confidence': min(avg_delta_cmh / 0.5, 1.0),
+            'stations': [d['station_id'] for d in detections],
+            'source': 'CMH-REALTIME'
+        }
+
+        latest_alert = alert
+        alert_history.append(alert)
+
+        logger.warning(
+            f"🚨🚨🚨 EARTHQUAKE ALERT: M{magnitude:.1f} detected by {len(detections)} stations")
+
+        # Log to file
+        log_earthquake_event(alert, source='CMH-RT')
+
+    def poll_data(self):
+        """Compatibility method"""
+        self.last_poll_time = datetime.now()
+
+    def initialize(self):
+        """Start SeedLink real-time monitoring"""
+        logger.info("⚡ Initializing SeedLink real-time monitoring...")
+
+        self.seedlink_manager = SeedLinkManager(self.on_detection)
+
+        # Add all 20 stations
+        for network, station in self.stations:
+            self.seedlink_manager.add_station(network, station)
+
+        # Start streaming
+        self.seedlink_manager.start()
+
+        logger.info(
+            f"✅ SeedLink ACTIVE: {len(self.stations)} stations streaming real-time data")
+
+
+class EEWEngine:
+    """Real-time earthquake monitoring engine with SeedLink"""
+
+    def __init__(self):
+        # Real stations - 20 global coverage
+        self.stations = [
+            ("JA", "KAMAE"), ("JA", "OKW"), ("JA",
+                                             "WTNM"), ("JA", "MZGH"), ("JA", "SHIZ"),
+            ("CI", "PAS"), ("CI", "CLC"), ("CI",
+                                           "LRL"), ("CI", "SBC"), ("CI", "SMO"),
+            ("BK", "FARB"), ("BK", "YBH"), ("BK",
+                                            "MCCM"), ("BK", "SAO"), ("BK", "CMB"),
+            ("NC", "A25K"), ("NC", "H04P"), ("NC",
+                                             "O22K"), ("NC", "Y27K"), ("NC", "Z24K"),
+        ]
+
+        self.seedlink_manager = None
+        self.detections = []
         self.last_poll_time = datetime.now()
         self.alert_count = 0
 
+        # Create old EEW system for compatibility
+        station_ids = [f"{net}.{sta}" for net, sta in self.stations]
+        self.eew_system = CMHEarthquakeEarlyWarning(
+            station_ids=station_ids,
+            sampling_rate=100.0
+        )
+
+    def on_detection(self, detection):
+        """Callback when P-wave detected"""
+        logger.warning(
+            f"🚨 P-WAVE: {detection['station_id']} ΔCMH={detection['delta_cmh']:.3f}")
+
+        # Log detection
+        self.detections.append(detection)
+
+        # Keep only last 100 detections
+        if len(self.detections) > 100:
+            self.detections.pop(0)
+
+        # Check for multi-station consensus (3+ stations within 10 seconds)
+        recent_time = detection['detection_time']
+        recent_detections = [
+            d for d in self.detections
+            if abs(d['detection_time'] - recent_time) < 10
+        ]
+
+        if len(recent_detections) >= 3:
+            self.issue_alert(recent_detections)
+
+    def issue_alert(self, detections):
+        """Issue earthquake alert from multiple detections"""
+        global latest_alert, alert_history
+
+        # Estimate magnitude from average delta CMH
+        avg_delta_cmh = sum(d['delta_cmh']
+                            for d in detections) / len(detections)
+        magnitude = max(3.0, min(9.0, 4.0 + (avg_delta_cmh * 10)))
+
+        alert = {
+            'alertid': f"CMH-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            'detectiontime': datetime.now().isoformat(),
+            'numstations': len(detections),
+            'estimatedmagnitude': round(magnitude, 1),
+            'magnitudeuncertainty': 0.5,
+            'confidence': min(avg_delta_cmh / 0.5, 1.0),
+            'stations': [d['station_id'] for d in detections],
+            'source': 'CMH-REALTIME'
+        }
+
+        latest_alert = alert
+        alert_history.append(alert)
+
+        logger.warning(
+            f"🚨🚨🚨 EARTHQUAKE ALERT: M{magnitude:.1f} detected by {len(detections)} stations")
+
+        # Log to file
+        log_earthquake_event(alert, source='CMH-RT')
+
     def poll_data(self):
+        """Compatibility method"""
         self.last_poll_time = datetime.now()
-        alert = self.eew_system.process()
-
-        if alert:
-            self.alert_count += 1
-            global latest_alert, alert_history
-            latest_alert = alert
-            alert_history.append(alert)
-
-            if len(alert_history) > 100:
-                alert_history.pop(0)
 
     def initialize(self):
-        logger.info("✓ EEW system ready")
+        """Start SeedLink real-time monitoring"""
+        logger.info("⚡ Initializing SeedLink real-time monitoring...")
+
+        self.seedlink_manager = SeedLinkManager(self.on_detection)
+
+        # Add all 20 stations
+        for network, station in self.stations:
+            self.seedlink_manager.add_station(network, station)
+
+        # Start streaming
+        self.seedlink_manager.start()
+
+        logger.info(
+            f"✅ SeedLink ACTIVE: {len(self.stations)} stations streaming real-time data")
+
 
 # ============================================================================
 # FLASK REST API ENDPOINTS
