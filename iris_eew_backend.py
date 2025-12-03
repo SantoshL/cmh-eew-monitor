@@ -33,11 +33,10 @@ import io
 # Import ObsPy for IRIS waveform retrieval
 from obspy.clients.fdsn import Client as IRISClient
 from seedlink_handler import SeedLinkManager
-from seedlink_handler import SeedLinkManager
 from obspy import UTCDateTime
 # Import SeedLink EEW Pipeline
-from performance_charts import PerformanceCharts  #
-from seedlink_eew_integration import EEWPipeline
+# from performance_charts import PerformanceCharts  # TODO: Add this module later
+# from seedlink_eew_integration import EEWPipeline  # TODO: Add this module later
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -705,106 +704,6 @@ class EEWEngine:
             f"✅ SeedLink ACTIVE: {len(self.stations)} stations streaming real-time data")
 
 
-class EEWEngine:
-    """Real-time earthquake monitoring engine with SeedLink"""
-
-    def __init__(self):
-        # Real stations - 20 global coverage
-        self.stations = [
-            ("JA", "KAMAE"), ("JA", "OKW"), ("JA",
-                                             "WTNM"), ("JA", "MZGH"), ("JA", "SHIZ"),
-            ("CI", "PAS"), ("CI", "CLC"), ("CI",
-                                           "LRL"), ("CI", "SBC"), ("CI", "SMO"),
-            ("BK", "FARB"), ("BK", "YBH"), ("BK",
-                                            "MCCM"), ("BK", "SAO"), ("BK", "CMB"),
-            ("NC", "A25K"), ("NC", "H04P"), ("NC",
-                                             "O22K"), ("NC", "Y27K"), ("NC", "Z24K"),
-        ]
-
-        self.seedlink_manager = None
-        self.detections = []
-        self.last_poll_time = datetime.now()
-        self.alert_count = 0
-
-        # Create old EEW system for compatibility
-        station_ids = [f"{net}.{sta}" for net, sta in self.stations]
-        self.eew_system = CMHEarthquakeEarlyWarning(
-            station_ids=station_ids,
-            sampling_rate=100.0
-        )
-
-    def on_detection(self, detection):
-        """Callback when P-wave detected"""
-        logger.warning(
-            f"🚨 P-WAVE: {detection['station_id']} ΔCMH={detection['delta_cmh']:.3f}")
-
-        # Log detection
-        self.detections.append(detection)
-
-        # Keep only last 100 detections
-        if len(self.detections) > 100:
-            self.detections.pop(0)
-
-        # Check for multi-station consensus (3+ stations within 10 seconds)
-        recent_time = detection['detection_time']
-        recent_detections = [
-            d for d in self.detections
-            if abs(d['detection_time'] - recent_time) < 10
-        ]
-
-        if len(recent_detections) >= 3:
-            self.issue_alert(recent_detections)
-
-    def issue_alert(self, detections):
-        """Issue earthquake alert from multiple detections"""
-        global latest_alert, alert_history
-
-        # Estimate magnitude from average delta CMH
-        avg_delta_cmh = sum(d['delta_cmh']
-                            for d in detections) / len(detections)
-        magnitude = max(3.0, min(9.0, 4.0 + (avg_delta_cmh * 10)))
-
-        alert = {
-            'alertid': f"CMH-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            'detectiontime': datetime.now().isoformat(),
-            'numstations': len(detections),
-            'estimatedmagnitude': round(magnitude, 1),
-            'magnitudeuncertainty': 0.5,
-            'confidence': min(avg_delta_cmh / 0.5, 1.0),
-            'stations': [d['station_id'] for d in detections],
-            'source': 'CMH-REALTIME'
-        }
-
-        latest_alert = alert
-        alert_history.append(alert)
-
-        logger.warning(
-            f"🚨🚨🚨 EARTHQUAKE ALERT: M{magnitude:.1f} detected by {len(detections)} stations")
-
-        # Log to file
-        log_earthquake_event(alert, source='CMH-RT')
-
-    def poll_data(self):
-        """Compatibility method"""
-        self.last_poll_time = datetime.now()
-
-    def initialize(self):
-        """Start SeedLink real-time monitoring"""
-        logger.info("⚡ Initializing SeedLink real-time monitoring...")
-
-        self.seedlink_manager = SeedLinkManager(self.on_detection)
-
-        # Add all 20 stations
-        for network, station in self.stations:
-            self.seedlink_manager.add_station(network, station)
-
-        # Start streaming
-        self.seedlink_manager.start()
-
-        logger.info(
-            f"✅ SeedLink ACTIVE: {len(self.stations)} stations streaming real-time data")
-
-
 # ============================================================================
 # FLASK REST API ENDPOINTS
 # ============================================================================
@@ -903,6 +802,41 @@ def download_research_data():
     except Exception as e:
         logger.error(f"Error creating data export: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/send-daily-report', methods=['GET'])
+def send_daily_report():
+    """Send daily email report - triggered by external cron"""
+    try:
+        # Get today's stats
+        stats = generate_daily_stats()
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # Count today's alerts
+        recent_alerts = [
+            a for a in alert_history
+            if a.get('detection_time', '').startswith(today)
+        ]
+
+        # Build report
+        report = {
+            'status': 'success',
+            'date': today,
+            'system_status': 'operational' if monitoring_active else 'inactive',
+            'active_stations': len(eew_engine.eew_system.detectors) if eew_engine else 0,
+            'alerts_today': len(recent_alerts),
+            'total_alerts': len(alert_history),
+            'max_magnitude_today': max([a.get('magnitude', 0) for a in recent_alerts]) if recent_alerts else 0,
+            'stats': stats,
+            'latest_alert': alert_history[-1] if alert_history else None
+        }
+
+        logger.info(f"📧 Daily report generated for {today}")
+        return jsonify(report)
+
+    except Exception as e:
+        logger.error(f"Error generating daily report: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @app.route('/api/test-historical', methods=['GET'])
@@ -1020,69 +954,69 @@ def initialize_app():
 # SEEDLINK REAL-TIME EEW ENDPOINTS
 # ============================================================================
 
-@app.route('/api/seedlink/start', methods=['POST'])
-def start_seedlink():
-    """Start real-time SeedLink listener"""
-    global seedlink_pipeline, seedlink_running
-    try:
-        if seedlink_pipeline is None:
-            seedlink_pipeline = EEWPipeline()
+# @app.route('/api/seedlink/start', methods=['POST'])
+# def start_seedlink():
+ #   """Start real-time SeedLink listener"""
+ #   global seedlink_pipeline, seedlink_running
+ #   try:
+ #       if seedlink_pipeline is None:
+  #          seedlink_pipeline = EEWPipeline()
 
-        if seedlink_pipeline.start():
-            seedlink_running = True
-            logger.info("✓ SeedLink pipeline started")
-            return jsonify({
-                'status': 'started',
-                'message': 'SeedLink listener running',
-                'pipeline': seedlink_pipeline.get_status()
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to start pipeline'
-            }), 500
+  #      if seedlink_pipeline.start():
+   #         seedlink_running = True
+   #         logger.info("✓ SeedLink pipeline started")
+   #         return jsonify({
+   #             'status': 'started',
+    #            'message': 'SeedLink listener running',
+     #           'pipeline': seedlink_pipeline.get_status()
+      #      })
+       # else:
+        #    return jsonify({
+        #        'status': 'error',
+        #        'message': 'Failed to start pipeline'
+        #    }), 500
 
-    except Exception as e:
-        logger.error(f"Error starting SeedLink: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-
-@app.route('/api/seedlink/status', methods=['GET'])
-def get_seedlink_status():
-    """Get SeedLink pipeline status"""
-    if seedlink_pipeline is None:
-        return jsonify({'status': 'not_initialized'})
-
-    return jsonify(seedlink_pipeline.get_status())
+    # except Exception as e:
+     #   logger.error(f"Error starting SeedLink: {e}")
+     #   return jsonify({
+     #       'status': 'error',
+     #       'message': str(e)
+     #   }), 500
 
 
-@app.route('/api/seedlink/alerts', methods=['GET'])
-def get_seedlink_alerts():
-    """Get recent SeedLink-based alerts"""
-    if seedlink_pipeline is None:
-        return jsonify([])
+# @app.route('/api/seedlink/status', methods=['GET'])
+# def get_seedlink_status():
+#    """Get SeedLink pipeline status"""
+#    if seedlink_pipeline is None:
+#        return jsonify({'status': 'not_initialized'})
+#
+#    return jsonify(seedlink_pipeline.get_status())
+#
 
-    n = request.args.get('limit', 10, type=int)
-    return jsonify(seedlink_pipeline.get_recent_alerts(n))
+# @app.route('/api/seedlink/alerts', methods=['GET'])
+# def get_seedlink_alerts():
+ #   """Get recent SeedLink-based alerts"""
+ #   if seedlink_pipeline is None:
+ #       return jsonify([])
+#
+ #   n = request.args.get('limit', 10, type=int)
+  #  return jsonify(seedlink_pipeline.get_recent_alerts(n))
 
 
-@app.route('/api/seedlink/stop', methods=['POST'])
-def stop_seedlink():
-    """Stop SeedLink listener"""
-    global seedlink_pipeline, seedlink_running
+# @app.route('/api/seedlink/stop', methods=['POST'])
+# def stop_seedlink():
+#    """Stop SeedLink listener"""
+ #   global seedlink_pipeline, seedlink_running
+#
+ #   if seedlink_pipeline:
+ #       seedlink_pipeline.stop()
+ #       seedlink_running = False
+ #       logger.info("✓ SeedLink pipeline stopped")
 
-    if seedlink_pipeline:
-        seedlink_pipeline.stop()
-        seedlink_running = False
-        logger.info("✓ SeedLink pipeline stopped")
-
-    return jsonify({
-        'status': 'stopped',
-        'message': 'SeedLink listener stopped'
-    })
+  #  return jsonify({
+   #     'status': 'stopped',
+  #      'message': 'SeedLink listener stopped'
+  #  })
 
 # ============================================================================
 # PERFORMANCE CHARTS ENDPOINTS
@@ -1090,50 +1024,50 @@ def stop_seedlink():
 
 
 # Initialize chart generator
-chart_generator = PerformanceCharts(DATA_DIR)
+# chart_generator = PerformanceCharts(DATA_DIR)
 
 
-@app.route('/api/performance-charts', methods=['GET'])
-def get_performance_charts():
-    """Generate and return performance run charts"""
-    try:
-        days = request.args.get('days', 90, type=int)
-        charts = chart_generator.generate_all_charts(days=days)
+# @app.route('/api/performance-charts', methods=['GET'])
+# def get_performance_charts():
+#    """Generate and return performance run charts"""
+#    try:
+ #       days = request.args.get('days', 90, type=int)
+  #      charts = chart_generator.generate_all_charts(days=days)
 
-        return jsonify({
-            'status': 'success',
-            'charts_generated': len(charts),
-            'charts': [str(c.name) for c in charts]
-        })
-    except Exception as e:
-        logger.error(f"Error generating charts: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/api/charts/hart_name>', methods=['GET'])
-def serve_chart(chart_name):
-    """Serve generated chart images"""
-    chart_path = DATA_DIR / 'charts' / chart_name
-
-    if chart_path.exists():
-        return send_file(str(chart_path), mimetype='image/png')
-    else:
-        return jsonify({'error': 'Chart not found'}), 404
+   #     return jsonify({
+   #         'status': 'success',
+   #         'charts_generated': len(charts),
+   #         'charts': [str(c.name) for c in charts]
+   #     })
+   # except Exception as e:
+   #     logger.error(f"Error generating charts: {e}")
+   #     return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
-@app.route('/api/chart-status', methods=['GET'])
-def chart_status():
-    """Check which charts are available"""
-    charts_dir = DATA_DIR / 'charts'
-    if not charts_dir.exists():
-        return jsonify({'status': 'no_charts', 'charts': []})
+# @app.route('/api/charts/<chart_name>', methods=['GET'])
+# def serve_chart(chart_name):
+ #   """Serve generated chart images"""
+ #   chart_path = DATA_DIR / 'charts' / chart_name
 
-    charts = list(charts_dir.glob('*.png'))
-    return jsonify({
-        'status': 'ok',
-        'total_charts': len(charts),
-        'charts': [c.name for c in charts]
-    })
+#    if chart_path.exists():
+#        return send_file(str(chart_path), mimetype='image/png')
+#    else:
+#        return jsonify({'error': 'Chart not found'}), 404
+#
+
+# @app.route('/api/chart-status', methods=['GET'])
+# def chart_status():
+#    """Check which charts are available"""
+#    charts_dir = DATA_DIR / 'charts'
+#    if not charts_dir.exists():
+#        return jsonify({'status': 'no_charts', 'charts': []})
+
+#    charts = list(charts_dir.glob('*.png'))
+#    return jsonify({
+#        'status': 'ok',
+#        'total_charts': len(charts),
+#        'charts': [c.name for c in charts]
+#    })
 
 
 if __name__ == '__main__':
