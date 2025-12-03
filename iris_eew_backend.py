@@ -44,6 +44,24 @@ from seedlink_eew_integration import EEWPipeline
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
+# Keep-alive function to prevent Railway serverless sleep
+
+
+def keep_alive_ping():
+    """Ping external service every 8 minutes to prevent Railway sleep"""
+    while True:
+        try:
+            time.sleep(480)  # 8 minutes
+            requests.get('https://www.google.com', timeout=5)
+            print("✅ Keep-alive ping sent to prevent sleep")
+        except Exception as e:
+            print(f"⚠️ Keep-alive ping failed: {e}")
+
+
+# Start keep-alive thread
+threading.Thread(target=keep_alive_ping, daemon=True).start()
+print("🔄 Keep-alive thread started")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
